@@ -1,6 +1,6 @@
 {
   "name": "@markarranz/opencode-focus-notify",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Desktop notifications for OpenCode with click-to-focus via OSC 99",
   "main": "plugin.js",
   "type": "module",
@@ -8,6 +8,9 @@
     "plugin.js",
     "notify.sh"
   ],
+  "scripts": {
+    "test": "node --test tests/test_plugin_events.mjs"
+  },
   "keywords": [
     "opencode",
     "opencode-plugin",

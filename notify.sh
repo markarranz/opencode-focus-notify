@@ -23,6 +23,13 @@ set -eu
 : "${NOTIFY_DEFAULT_TITLE:=OpenCode}"
 : "${NOTIFY_TITLE_PREFIX:=}"
 : "${NOTIFY_DRY_RUN:=0}"
+: "${NOTIFY_DEBUG:=0}"
+
+debug_log() {
+	if [ "$NOTIFY_DEBUG" = "1" ]; then
+		printf '%s\n' "$*" >&2
+	fi
+}
 
 has_cmd() {
 	command -v "$1" >/dev/null 2>&1
@@ -111,15 +118,21 @@ msg=''
 title="$NOTIFY_DEFAULT_TITLE"
 kitty_window_id=''
 kitty_listen_on=''
+session_path=''
+session_id=''
 
 if has_cmd jq; then
 	msg=$(printf '%s' "$input" | jq -r '.message // empty')
 	title=$(printf '%s' "$input" | jq -r --arg default_title "$NOTIFY_DEFAULT_TITLE" '.title // $default_title')
 	kitty_window_id=$(printf '%s' "$input" | jq -r '.kitty_window_id // empty')
 	kitty_listen_on=$(printf '%s' "$input" | jq -r '.kitty_listen_on // empty')
+	session_path=$(printf '%s' "$input" | jq -r '.session_path // empty')
+	session_id=$(printf '%s' "$input" | jq -r '.session_id // empty')
 else
 	msg=$(extract_json_string_fallback message)
 	title_fallback=$(extract_json_string_fallback title)
+	session_path=$(extract_json_string_fallback session_path)
+	session_id=$(extract_json_string_fallback session_id)
 	if [ -n "$title_fallback" ]; then
 		title="$title_fallback"
 	fi
@@ -152,10 +165,13 @@ if [ -n "$NOTIFY_TITLE_PREFIX" ]; then
 	title="${NOTIFY_TITLE_PREFIX}${title}"
 fi
 
+debug_log "notify.sh parsed kitty_window_id=$kitty_window_id kitty_listen_on=$kitty_listen_on session_id=$session_id session_path=$session_path"
+
 path_used=''
 tty_dev=''
+kitty_bin=''
 
-if [ -n "${KITTY_WINDOW_ID-}" ] && [ -n "${KITTY_LISTEN_ON-}" ]; then
+if [ -n "$kitty_window_id" ] && [ -n "$kitty_listen_on" ]; then
 	if ! has_cmd jq; then
 		exit 0
 	fi
@@ -165,30 +181,40 @@ if [ -n "${KITTY_WINDOW_ID-}" ] && [ -n "${KITTY_LISTEN_ON-}" ]; then
 		exit 0
 	fi
 
-	if [ -z "$kitty_window_id" ] || [ -z "$kitty_listen_on" ]; then
-		exit 0
+	target_window_id="$kitty_window_id"
+	if [ -n "$session_path" ]; then
+		candidate_window_id=$(
+			"$kitty_bin" @ --to "$kitty_listen_on" ls 2>/dev/null |
+				jq -r --arg sp "$session_path" \
+					'first(.[].tabs[].windows[] | select((.cwd // "") == $sp) | .id) // empty' 2>/dev/null
+		)
+		case "$candidate_window_id" in
+		"" | *[!0-9]*)
+			candidate_window_id=''
+			;;
+		esac
+		if [ -n "$candidate_window_id" ] && [ "$candidate_window_id" != "$target_window_id" ]; then
+			debug_log "notify.sh remapped kitty window by session_path: $target_window_id -> $candidate_window_id"
+			target_window_id="$candidate_window_id"
+		fi
 	fi
 
 	window_pid=$(
 		"$kitty_bin" @ --to "$kitty_listen_on" ls 2>/dev/null |
-			jq -r --argjson wid "$kitty_window_id" \
+			jq -r --argjson wid "$target_window_id" \
 				'.[].tabs[].windows[] | select(.id == $wid) | .pid' 2>/dev/null
 	)
 
-	if [ -z "$window_pid" ]; then
-		if [ "$NOTIFY_DRY_RUN" = "1" ]; then
-			path_used='kitty'
-			tty_dev='unknown'
-		else
-			exit 0
-		fi
-	fi
-
 	if [ -n "$window_pid" ]; then
 		tty_dev=$(ps -o tty= -p "$window_pid" 2>/dev/null | tr -d ' ')
+		path_used='kitty'
+	else
+		debug_log "notify.sh kitty path could not resolve window pid for window_id=$target_window_id; falling back to generic tty discovery"
 	fi
-	path_used='kitty'
-else
+
+fi
+
+if [ -z "$tty_dev" ]; then
 	tty_dev=$(discover_tty_generic 2>/dev/null || true)
 	if [ -z "$tty_dev" ]; then
 		if [ "$NOTIFY_DRY_RUN" = "1" ]; then
@@ -197,7 +223,9 @@ else
 			exit 0
 		fi
 	fi
-	path_used='generic'
+	if [ "$path_used" != 'kitty' ]; then
+		path_used='generic'
+	fi
 fi
 
 if [ "$NOTIFY_DRY_RUN" != "1" ] && { [ -z "$tty_dev" ] || [ "$tty_dev" = "?" ] || [ ! -w "/dev/$tty_dev" ]; }; then

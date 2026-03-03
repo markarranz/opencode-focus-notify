@@ -8,7 +8,7 @@ When OpenCode completes a task or requires attention, the plugin sends a desktop
 
 The notification engine has two paths:
 
-**Kitty enhanced mode** (when `KITTY_WINDOW_ID` and `KITTY_LISTEN_ON` are set): `notify.sh` resolves the kitty binary, uses `kitty @ ls` to locate the exact Kitty window PID, discovers that window's PTY via `ps -o tty=`, then writes OSC 99 directly to that PTY. This gives precise targeting across tabs, splits, and OS windows.
+**Kitty enhanced mode** (when Kitty IDs are available in payload or env): `notify.sh` resolves the kitty binary, uses `kitty @ ls` to locate the exact Kitty window PID, discovers that window's PTY via `ps -o tty=`, then writes OSC 99 directly to that PTY. It also uses OpenCode session path metadata to remap stale Kitty window IDs when possible. This gives more reliable targeting across tabs, splits, and OS windows.
 
 **Generic mode** (all other OSC 99 terminals): `notify.sh` walks the macOS process tree from the current process upward, discovers a terminal PTY, then writes OSC 99 with `a=focus` to that PTY. The terminal handles click-to-focus behavior natively.
 
@@ -68,21 +68,41 @@ Works with terminals that implement OSC 99 desktop notifications. Click-to-focus
 | Event | Description |
 |---|---|
 | `session.status` (idle) | OpenCode session became idle |
+| `session.idle` | Deprecated compatibility event for session idle |
 | `session.error` | Session error occurred |
-| `permission.request` | Permission requested |
+| `permission.asked` | Permission requested |
+| `permission.replied` | Permission was answered (optional, only when `NOTIFY_PERMISSION_REPLIED=1`) |
+
+Note: `permission.updated` and `permission.request` are tolerated in code as compatibility fallbacks.
 
 ## Configuration
 
 | Variable | Default | Description |
 |---|---|---|
-| `NOTIFY_HOOK_SCRIPT` | `~/.local/bin/opencode-focus-notify` | Path to `notify.sh` |
+| `NOTIFY_HOOK_SCRIPT` | Bundled `notify.sh` | Path to `notify.sh` |
 | `NOTIFY_DISABLE` | `0` | Set to `1` to disable notifications |
 | `NOTIFY_DRY_RUN` | `0` | Set to `1` to print details without sending notifications |
 | `NOTIFY_KITTY_BIN` | Auto-detected | Explicit kitty binary path (Kitty enhanced mode only) |
 | `NOTIFY_DEFAULT_TITLE` | `OpenCode` | Title used when payload has no title |
 | `NOTIFY_TITLE_PREFIX` | Empty | Prefix prepended to all notification titles |
+| `NOTIFY_DEBUG` | `0` | Set to `1` to log plugin errors to stderr |
+| `NOTIFY_PERMISSION_REPLIED` | `0` | Set to `1` to notify when a permission request is answered |
+
+When `NOTIFY_DEBUG=1`, `notify.sh` also logs selected Kitty/generic routing decisions to stderr.
 
 ## Testing
+
+Run automated plugin event tests:
+
+```sh
+npm test
+```
+
+These tests verify:
+- Idle notifications for `session.status` and `session.idle` compatibility
+- `permission.asked` notifications
+- Default suppression of `permission.replied`
+- Opt-in `permission.replied` notifications when `NOTIFY_PERMISSION_REPLIED=1`
 
 Use dry-run mode to verify payload handling and path selection.
 
