@@ -3,6 +3,7 @@ name: Publish to npm
 on:
   release:
     types: [published]
+  workflow_dispatch:
 
 jobs:
   publish:
@@ -18,6 +19,6 @@ jobs:
           node-version: "20"
           registry-url: "https://registry.npmjs.org"
 
+      - run: npm install -g npm@latest
+
       - run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
